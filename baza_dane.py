@@ -5,189 +5,206 @@ import altair as alt
 import time
 import random
 
-# --- KONFIGURACJA STRONY ---
+# --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(
-    page_title="Inventory Master Pro",
-    page_icon="🏢",
+    page_title="Inventory Pro + Snake",
+    page_icon="🔥",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- STYLIZACJA CSS ---
+# --- 2. STYLIZACJA CSS ---
 st.markdown("""
 <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: #f0f2f6;
-        border-radius: 5px 5px 0px 0px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+    .stApp { background-color: #FFFBF5; }
+    div[data-testid="metric-container"] {
+        background-color: #FFFFFF;
+        border-left: 6px solid #FF8C00;
+        padding: 15px; border-radius: 8px;
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #FFFFFF !important;
-        border-top: 3px solid #FF4B4B !important;
-    }
-    /* Styl dla planszy Snake */
+    [data-testid="stMetricValue"] { color: #D35400 !important; }
     .snake-board {
-        font-family: monospace;
-        line-height: 1.2;
-        font-size: 20px;
-        background-color: #222;
-        color: #eee;
-        padding: 10px;
-        border-radius: 5px;
-        text-align: center;
+        font-family: monospace; font-size: 18px; line-height: 1;
+        background-color: #222; color: #0f0; padding: 10px;
+        border-radius: 10px; text-align: center; border: 3px solid #5D4037;
     }
+    h1, h2, h3 { color: #5D4037 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- ZAAWANSOWANE POŁĄCZENIE Z SUPABASE ---
+# --- 3. POŁĄCZENIE Z BAZĄ (CACHE) ---
 @st.cache_resource
 def init_connection():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        st.error("❌ Błąd krytyczny: Brak sekretów połączenia.")
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except:
+        st.error("Błąd połączenia z bazą danych!")
         st.stop()
 
 supabase = init_connection()
 
-# --- FUNKCJE LOGIKI BIZNESOWEJ ---
-def pobierz_dane_glowne():
-    kat_response = supabase.table('Kategorie').select("*").execute()
-    kategorie_df = pd.DataFrame(kat_response.data)
-    prod_response = supabase.table('Produkty').select("*, Kategorie(nazwa)").execute()
-    data = prod_response.data
+# --- 4. FUNKCJE DANYCH ---
+def pobierz_wszystko():
+    # Kategorie
+    k_res = supabase.table('Kategorie').select("*").execute()
+    df_k = pd.DataFrame(k_res.data)
     
-    cleaned_data = []
-    for item in data:
-        kat_nazwa = item['Kategorie']['nazwa'] if item.get('Kategorie') else "⚠️ Nieprzypisana"
-        cleaned_data.append({
-            "ID": item['id'],
-            "Nazwa Produktu": item['nazwa'],
-            "Stan (szt.)": item['liczba'],
-            "Cena (PLN)": item['cena'],
-            "Kategoria": kat_nazwa,
-            "kategoria_id_hidden": item['kategoria_id']
+    # Produkty
+    p_res = supabase.table('Produkty').select("*, Kategorie(nazwa)").execute()
+    data = p_res.data
+    
+    clean = []
+    for i in data:
+        kat_n = i['Kategorie']['nazwa'] if i.get('Kategorie') else "Brak"
+        clean.append({
+            "id": i['id'],
+            "nazwa": i['nazwa'],
+            "liczba": i['liczba'],
+            "cena": i['cena'],
+            "kategoria": kat_n,
+            "kategoria_id": i['kategoria_id']
         })
-    produkty_df = pd.DataFrame(cleaned_data)
-    total_items = produkty_df["Stan (szt.)"].sum() if not produkty_df.empty else 0
-    total_value = (produkty_df["Stan (szt.)"] * produkty_df["Cena (PLN)"]).sum() if not produkty_df.empty else 0
-    return kategorie_df, produkty_df, total_items, total_value
+    df_p = pd.DataFrame(clean)
+    
+    val = (df_p["liczba"] * df_p["cena"]).sum() if not df_p.empty else 0
+    szt = df_p["liczba"].sum() if not df_p.empty else 0
+    
+    return df_k, df_p, szt, val
 
-# --- INTERFEJS ---
-st.title("🏢 Centrum Zarządzania Magazynem")
-st.markdown("---")
-
-kategorie_df, produkty_df, total_items_metric, total_value_metric = pobierz_dane_glowne()
-
-# DASHBOARD METRYK
-m1, m2, m3 = st.columns(3)
-with m1: st.metric(label="📦 Łącznie sztuk", value=f"{total_items_metric:,.0f}".replace(",", " "))
-with m2: st.metric(label="💰 Wartość magazynu", value=f"{total_value_metric:,.2f} PLN".replace(",", " "))
-with m3: st.metric(label="🗂️ Aktywne kategorie", value=len(kategorie_df) if not kategorie_df.empty else 0)
-
-st.markdown("---")
-
-tab_prod, tab_kat, tab_game = st.tabs(["🛍️ Produkty i Operacje", "⚙️ Konfiguracja Kategorii", "🐍 Przerwa na Snake'a"])
-
-# ZAKŁADKA 1 i 2 (Skrócone dla czytelności, Twoja logika pozostaje bez zmian)
-with tab_prod:
-    if produkty_df.empty:
-        st.info("🌟 Magazyn jest pusty.")
-    else:
-        # Wykresy i Edytor (Z zachowaniem Twojej logiki zapisu)
-        st.subheader("📋 Baza Produktów")
-        edited_df = st.data_editor(produkty_df, use_container_width=True, hide_index=True)
-        # ... (Tutaj Twoja logika zapisu do bazy) ...
-
-with tab_kat:
-    st.subheader("⚙️ Zarządzanie Kategoriami")
-    # ... (Tutaj Twoja logika dodawania/usuwania kategorii) ...
-
-# ==================================================
-# ZAKŁADKA 3: GRA SNAKE
-# ==================================================
-with tab_game:
-    st.subheader("🎮 Snake: Biurowa Przerwa")
-    st.write("Użyj przycisków poniżej, aby sterować wężem. Zbieraj jabłka (🍎)!")
-
-    # Inicjalizacja stanu gry
+# --- 5. LOGIKA GRY SNAKE ---
+def init_snake():
     if 'snake' not in st.session_state:
-        st.session_state.snake = [(5, 5), (5, 6), (5, 7)]
+        st.session_state.snake = [(5, 5), (5, 6)]
         st.session_state.direction = 'UP'
-        st.session_state.food = (10, 10)
+        st.session_state.food = (2, 2)
         st.session_state.score = 0
         st.session_state.game_over = False
 
-    def reset_game():
-        st.session_state.snake = [(5, 5), (5, 6), (5, 7)]
-        st.session_state.direction = 'UP'
-        st.session_state.food = (random.randint(0, 14), random.randint(0, 14))
-        st.session_state.score = 0
-        st.session_state.game_over = False
+# --- 6. INTERFEJS GŁÓWNY ---
+st.title("🏢 Magazyn & Chill")
 
-    # Sterowanie
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c2: 
-        if st.button("⬆️ Góra"): st.session_state.direction = 'UP'
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1: 
-        if st.button("⬅️ Lewo"): st.session_state.direction = 'LEFT'
-    with c2:
-        if st.button("🔄 Reset"): reset_game()
-    with c3: 
-        if st.button("➡️ Prawo"): st.session_state.direction = 'RIGHT'
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c2: 
-        if st.button("⬇️ Dół"): st.session_state.direction = 'DOWN'
+df_k, df_p, total_szt, total_val = pobierz_wszystko()
 
-    # Mechanika gry
-    game_placeholder = st.empty()
+# METRYKI
+c1, c2, c3 = st.columns(3)
+c1.metric("📦 Sztuk ogółem", f"{total_szt:,.0f}")
+c2.metric("💰 Wartość", f"{total_val:,.2f} zł")
+c3.metric("🏷️ Kategorie", len(df_k))
+
+tab_mag, tab_kat, tab_snake = st.tabs(["🛍️ Magazyn", "⚙️ Kategorie", "🐍 Snake Time"])
+
+# --- TAB: MAGAZYN ---
+with tab_mag:
+    if not df_p.empty:
+        # WYKRES (Naprawiony Altair)
+        with st.expander("📊 Wykresy stanów", expanded=True):
+            chart_data = df_p.groupby("kategoria")["liczba"].sum().reset_index()
+            # Używamy prostych nazw kolumn dla Altair
+            c = alt.Chart(chart_data).mark_bar(color='#FF8C00', cornerRadius=5).encode(
+                x=alt.X('kategoria:N', title="Kategoria"),
+                y=alt.Y('liczba:Q', title="Suma sztuk"),
+                tooltip=['kategoria', 'liczba']
+            ).properties(height=300)
+            st.altair_chart(c, use_container_width=True)
+
+        # TABELA
+        st.subheader("📋 Produkty")
+        # Wyświetlamy ładne nazwy, ale edytujemy oryginał
+        edited = st.data_editor(
+            df_p[["id", "nazwa", "liczba", "cena", "kategoria"]],
+            hide_index=True, use_container_width=True,
+            disabled=["id", "nazwa", "kategoria"],
+            key="editor"
+        )
+        
+        # Zapis zmian w tabeli
+        if not edited.equals(df_p[["id", "nazwa", "liczba", "cena", "kategoria"]]):
+            for idx, row in edited.iterrows():
+                orig = df_p.iloc[idx]
+                if row['liczba'] != orig['liczba'] or row['cena'] != orig['cena']:
+                    supabase.table('Produkty').update({
+                        "liczba": int(row['liczba']), "cena": float(row['cena'])
+                    }).eq('id', int(row['id'])).execute()
+            st.toast("Zapisano zmiany!")
+            time.sleep(1)
+            st.rerun()
+            
+    # DODAWANIE
+    with st.expander("➕ Dodaj nowy produkt"):
+        with st.form("new_p"):
+            n = st.text_input("Nazwa")
+            l = st.number_input("Ilość", 0)
+            p = st.number_input("Cena", 0.0)
+            k_opt = {r['nazwa']: r['id'] for _, r in df_k.iterrows()}
+            k = st.selectbox("Kategoria", list(k_opt.keys()))
+            if st.form_submit_button("Dodaj"):
+                supabase.table('Produkty').insert({
+                    "nazwa": n, "liczba": l, "cena": p, "kategoria_id": k_opt[k]
+                }).execute()
+                st.rerun()
+
+# --- TAB: KATEGORIE ---
+with tab_kat:
+    st.dataframe(df_k[['nazwa', 'opis']], use_container_width=True, hide_index=True)
+    with st.form("new_k"):
+        kn = st.text_input("Nowa kategoria")
+        if st.form_submit_button("Dodaj kategorię"):
+            supabase.table('Kategorie').insert({"nazwa": kn}).execute()
+            st.rerun()
+
+# --- TAB: SNAKE ---
+with tab_snake:
+    init_snake()
+    col_g1, col_g2 = st.columns([1, 2])
     
-    if not st.session_state.game_over:
-        # Logika ruchu
-        head_x, head_y = st.session_state.snake[0]
-        if st.session_state.direction == 'UP': head_x -= 1
-        elif st.session_state.direction == 'DOWN': head_x += 1
-        elif st.session_state.direction == 'LEFT': head_y -= 1
-        elif st.session_state.direction == 'RIGHT': head_y += 1
+    with col_g1:
+        st.write(f"### Wynik: {st.session_state.score}")
+        # Przyciski sterowania
+        st.button("⬆️", on_click=lambda: st.session_state.update(direction='UP'))
+        c_l, c_r = st.columns(2)
+        c_l.button("⬅️", on_click=lambda: st.session_state.update(direction='LEFT'))
+        c_r.button("➡️", on_click=lambda: st.session_state.update(direction='RIGHT'))
+        st.button("⬇️", on_click=lambda: st.session_state.update(direction='DOWN'))
+        if st.button("Restart"): 
+            del st.session_state.snake
+            st.rerun()
 
-        new_head = (head_x, head_y)
-
-        # Kolizje ze ścianami lub samym sobą
-        if (head_x < 0 or head_x >= 15 or head_y < 0 or head_y >= 15 or 
-            new_head in st.session_state.snake):
-            st.session_state.game_over = True
-        else:
-            st.session_state.snake.insert(0, new_head)
-            # Jedzenie
-            if new_head == st.session_state.food:
-                st.session_state.score += 1
-                st.session_state.food = (random.randint(0, 14), random.randint(0, 14))
+    with col_g2:
+        game_placeholder = st.empty()
+        
+        # Mechanika ruchu
+        if not st.session_state.game_over:
+            head_x, head_y = st.session_state.snake[0]
+            if st.session_state.direction == 'UP': head_x -= 1
+            elif st.session_state.direction == 'DOWN': head_x += 1
+            elif st.session_state.direction == 'LEFT': head_y -= 1
+            elif st.session_state.direction == 'RIGHT': head_y += 1
+            
+            new_h = (head_x, head_y)
+            
+            # Kolizje
+            if (head_x < 0 or head_x >= 15 or head_y < 0 or head_y >= 15 or new_h in st.session_state.snake):
+                st.session_state.game_over = True
             else:
-                st.session_state.snake.pop()
-
-    # Rysowanie planszy
-    board = [["░" for _ in range(15)] for _ in range(15)]
-    fx, fy = st.session_state.food
-    board[fx][fy] = "🍎"
-    for idx, (sx, sy) in enumerate(st.session_state.snake):
-        board[sx][sy] = "🟢" if idx == 0 else "🟩"
-
-    board_str = "\n".join(["".join(row) for row in board])
-    
-    with game_placeholder.container():
+                st.session_state.snake.insert(0, new_h)
+                if new_h == st.session_state.food:
+                    st.session_state.score += 1
+                    st.session_state.food = (random.randint(0, 14), random.randint(0, 14))
+                else:
+                    st.session_state.snake.pop()
+        
+        # Rysowanie
+        board = [["." for _ in range(15)] for _ in range(15)]
+        fx, fy = st.session_state.food
+        board[fx][fy] = "🍎"
+        for i, (sx, sy) in enumerate(st.session_state.snake):
+            board[sx][sy] = "🐲" if i == 0 else "🟢"
+            
+        b_str = "\n".join([" ".join(r) for r in board])
+        game_placeholder.markdown(f'<div class="snake-board">{b_str}</div>', unsafe_allow_html=True)
+        
         if st.session_state.game_over:
-            st.error(f"Koniec gry! Twój wynik: {st.session_state.score}")
-            if st.button("Zagraj jeszcze raz"): reset_game()
+            st.error("GAME OVER!")
         else:
-            st.markdown(f'<div class="snake-board">{board_str}</div>', unsafe_allow_html=True)
-            st.write(f"Punkty: **{st.session_state.score}**")
-            time.sleep(0.3)
+            time.sleep(0.4)
             st.rerun()
