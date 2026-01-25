@@ -3,34 +3,27 @@ from supabase import create_client, Client
 import pandas as pd
 import altair as alt
 
-# --- KONFIGURACJA STRONY ---
+# --- KONFIGURACJA STRONY (MUSI BYĆ PIERWSZA) ---
 st.set_page_config(
-    page_title="Inventory Master",
-    page_icon="🔥",
+    page_title="Inventory Master Pro",
+    page_icon="🏢",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- STYLIZACJA CSS (CIEPŁE KOLORY) ---
+# --- STYLIZACJA CSS (OPCJONALNE UPIĘKSZENIE) ---
 st.markdown("""
 <style>
-    .stApp { background-color: #FFFBF5; }
-    div[data-testid="metric-container"] {
-        background-color: #FFFFFF;
-        border-left: 6px solid #FF8C00;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 2px 2px 10px rgba(255, 140, 0, 0.1);
-    }
     [data-testid="stMetricValue"] {
-        font-size: 2rem !important;
-        color: #D35400 !important;
+        font-size: 1.8rem !important;
     }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
         white-space: pre-wrap;
-        background-color: #FDF2E9;
+        background-color: #f0f2f6;
         border-radius: 5px 5px 0px 0px;
         gap: 5px;
         padding-top: 10px;
@@ -38,231 +31,268 @@ st.markdown("""
     }
     .stTabs [aria-selected="true"] {
         background-color: #FFFFFF !important;
-        border-top: 4px solid #FF4B4B !important;
-        font-weight: bold;
+        border-top: 3px solid #FF4B4B !important;
     }
-    h1, h2, h3 { color: #5D4037 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- POŁĄCZENIE Z SUPABASE ---
+
+# --- ZAAWANSOWANE POŁĄCZENIE Z SUPABASE (CACHE) ---
 @st.cache_resource
 def init_connection():
+    """Nawiązuje połączenie i cache'uje je, aby nie łączyć się przy każdym odświeżeniu."""
     try:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
-        st.error("❌ Błąd: Sprawdź sekrety połączenia.")
+        st.error("❌ Błąd krytyczny: Brak sekretów połączenia z bazą danych.")
         st.stop()
 
 supabase = init_connection()
 
-# --- FUNKCJE ---
+# --- FUNKCJE LOGIKI BIZNESOWEJ ---
 
 def pobierz_dane_glowne():
-    # Pobieranie danych
+    """Pobiera i przetwarza wszystkie potrzebne dane w jednym rzucie."""
+    # Pobierz kategorie
     kat_response = supabase.table('Kategorie').select("*").execute()
     kategorie_df = pd.DataFrame(kat_response.data)
     
+    # Pobierz produkty z relacjami
     prod_response = supabase.table('Produkty').select("*, Kategorie(nazwa)").execute()
     data = prod_response.data
     
     cleaned_data = []
     for item in data:
-        kat_nazwa = item['Kategorie']['nazwa'] if item.get('Kategorie') else "Nieprzypisana"
+        # Bezpieczne pobieranie nazwy kategorii
+        kat_nazwa = item['Kategorie']['nazwa'] if item.get('Kategorie') else "⚠️ Nieprzypisana"
         cleaned_data.append({
-            "id": item['id'], # Małe litery w kodzie są bezpieczniejsze
-            "nazwa": item['nazwa'],
-            "liczba": item['liczba'],
-            "cena": item['cena'],
-            "kategoria": kat_nazwa,
-            "kategoria_id": item['kategoria_id']
+            "ID": item['id'], # ID wielkimi literami, żeby nie edytować
+            "Nazwa Produktu": item['nazwa'],
+            "Stan (szt.)": item['liczba'],
+            "Cena (PLN)": item['cena'],
+            "Kategoria": kat_nazwa,
+            "kategoria_id_hidden": item['kategoria_id'] # Ukryte ID do operacji bazodanowych
         })
     
     produkty_df = pd.DataFrame(cleaned_data)
     
-    # Obliczamy sumy
+    # Obliczenia do metryk
     if not produkty_df.empty:
-        total_items = produkty_df["liczba"].sum()
-        total_value = (produkty_df["liczba"] * produkty_df["cena"]).sum()
+        total_items = produkty_df["Stan (szt.)"].sum()
+        total_value = (produkty_df["Stan (szt.)"] * produkty_df["Cena (PLN)"]).sum()
     else:
         total_items = 0
         total_value = 0
         
     return kategorie_df, produkty_df, total_items, total_value
 
-# --- INTERFEJS ---
+# --- GŁÓWNY INTERFEJS ---
 
-st.title("🔥 Gorący Magazyn")
+st.title("🏢 Centrum Zarządzania Magazynem")
 st.markdown("---")
 
+# Pobranie świeżych danych na początku
 kategorie_df, produkty_df, total_items_metric, total_value_metric = pobierz_dane_glowne()
 
-# === METRYKI ===
+# === SEKCJA METRYK (DASHBOARD) ===
 m1, m2, m3 = st.columns(3)
 with m1:
-    st.metric(label="📦 Łącznie sztuk", value=f"{total_items_metric:,.0f}".replace(",", " "))
+    st.metric(label="📦 Łącznie sztuk w magazynie", value=f"{total_items_metric:,.0f}".replace(",", " "))
 with m2:
-    st.metric(label="💰 Wartość magazynu", value=f"{total_value_metric:,.2f} zł".replace(",", " "))
+    st.metric(label="💰 Całkowita wartość magazynu", value=f"{total_value_metric:,.2f} PLN".replace(",", " "))
 with m3:
-    st.metric(label="🏷️ Kategorie", value=len(kategorie_df) if not kategorie_df.empty else 0)
+    st.metric(label="🗂️ Aktywne kategorie", value=len(kategorie_df) if not kategorie_df.empty else 0)
 
 st.markdown("---")
 
-tab_prod, tab_kat = st.tabs(["🌶️ Produkty i Analiza", "📚 Kategorie"])
+# === ZAKŁADKI GŁÓWNE ===
+tab_prod, tab_kat = st.tabs(["🛍️ Produkty i Operacje", "⚙️ Konfiguracja Kategorii"])
 
-# === ZAKŁADKA 1 ===
+# ==================================================
+# ZAKŁADKA 1: PRODUKTY (ZAAWANSOWANA)
+# ==================================================
 with tab_prod:
     if produkty_df.empty:
-        st.warning("Dodaj najpierw kategorie i produkty!")
+        st.info("🌟 Twój magazyn jest pusty. Rozpocznij od dodania kategorii, a następnie produktów.")
     else:
-        # --- WYKRESY (NAPRAWIONE) ---
-        with st.expander("📈 Rozwiń Analitykę", expanded=True):
+        # --- 1. ZAAWANSOWANE WYKRESY (ALTAIR) ---
+        with st.expander("📊 Rozwiń Analitykę (Wykresy)", expanded=True):
             col_chart1, col_chart2 = st.columns(2)
             
-            # 1. Przygotowanie danych SPECJALNIE pod wykres (proste nazwy kolumn bez nawiasów!)
-            df_chart = produkty_df.copy()
-            df_chart["wartosc"] = df_chart["liczba"] * df_chart["cena"]
-            
-            # Grupowanie
-            df_qty = df_chart.groupby("kategoria")["liczba"].sum().reset_index()
-            df_val = df_chart.groupby("kategoria")["wartosc"].sum().reset_index()
-
-            # Definicja ciepłej palety
-            warm_scale = alt.Scale(range=['#FF4B4B', '#FF8C00', '#FFD700', '#E91E63', '#8E24AA'])
+            # Przygotowanie danych do wykresów
+            df_chart_qty = produkty_df.groupby("Kategoria")["Stan (szt.)"].sum().reset_index()
+            # Obliczamy wartość dla każdego produktu, potem grupujemy
+            produkty_df["Wartosc_Pozycji"] = produkty_df["Stan (szt.)"] * produkty_df["Cena (PLN)"]
+            df_chart_val = produkty_df.groupby("Kategoria")["Wartosc_Pozycji"].sum().reset_index()
 
             with col_chart1:
-                st.subheader("Ilość (Sztuki)")
-                # Używamy prostych nazw kolumn: 'kategoria', 'liczba'
-                chart1 = alt.Chart(df_qty).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
-                    x=alt.X('kategoria:N', sort='-y', title=None), # :N oznacza tekst
-                    y=alt.Y('liczba:Q', title='Suma'),             # :Q oznacza liczbę
-                    color=alt.Color('kategoria:N', legend=None, scale=warm_scale),
-                    tooltip=['kategoria', 'liczba']
+                st.subheader("Ilość sztuk wg kategorii")
+                chart1 = alt.Chart(df_chart_qty).mark_bar().encode(
+                    x=alt.X('Kategoria', sort='-y', title=None),
+                    y=alt.Y('Stan (szt.)', title='Suma sztuk'),
+                    color=alt.Color('Kategoria', legend=None, scale={"scheme": "tableau10"}),
+                    tooltip=['Kategoria', 'Stan (szt.)']
                 ).interactive()
                 st.altair_chart(chart1, use_container_width=True)
 
             with col_chart2:
-                st.subheader("Wartość (PLN)")
-                chart2 = alt.Chart(df_val).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
-                    x=alt.X('kategoria:N', sort='-y', title=None),
-                    y=alt.Y('wartosc:Q', title='Wartość'),
-                    color=alt.Color('kategoria:N', legend=None, scale=warm_scale),
-                    tooltip=[
-                        alt.Tooltip('kategoria', title='Kategoria'), 
-                        alt.Tooltip('wartosc', format=',.2f', title='Wartość PLN')
-                    ]
+                st.subheader("Wartość wg kategorii (PLN)")
+                chart2 = alt.Chart(df_chart_val).mark_bar().encode(
+                    x=alt.X('Kategoria', sort='-y', title=None),
+                    y=alt.Y('Wartosc_Pozycji', title='Wartość całkowita PLN'),
+                    color=alt.Color('Kategoria', legend=None, scale={"scheme": "viridis"}),
+                    tooltip=[alt.Tooltip('Kategoria'), alt.Tooltip('Wartosc_Pozycji', format=',.2f', title='Wartość PLN')]
                 ).interactive()
                 st.altair_chart(chart2, use_container_width=True)
 
         st.divider()
 
-        # --- EDYCJA (TABELA DO WYŚWIETLANIA I EDYCJI) ---
-        st.subheader("📋 Edycja Stanów (Inline)")
-        
-        # Kopia do wyświetlania z ładnymi nagłówkami dla ludzi
-        display_df = produkty_df.copy()
-        display_df = display_df.rename(columns={
-            "nazwa": "Nazwa Produktu",
-            "liczba": "Stan (szt.)",
-            "cena": "Cena (PLN)",
-            "kategoria": "Kategoria"
-        })
+        # --- 2. INTERAKTYWNA TABELA (EDYCJA INLINE!) ---
+        st.subheader("📋 Baza Produktów (Edytuj bezpośrednio w tabeli)")
+        st.caption("💡 Kliknij dwukrotnie na komórkę 'Stan' lub 'Cena', aby ją edytować. Zmiany zapisują się automatycznie.")
 
+        # Konfiguracja edytora danych
         edited_df = st.data_editor(
-            display_df,
+            produkty_df,
             key="product_editor",
-            disabled=["id", "Nazwa Produktu", "Kategoria", "kategoria_id"],
+            disabled=["ID", "Nazwa Produktu", "Kategoria", "kategoria_id_hidden"], # Tych kolumn nie chcemy edytować inline
             column_config={
-                "Cena (PLN)": st.column_config.NumberColumn(format="%.2f zł", min_value=0, step=0.01),
-                "Stan (szt.)": st.column_config.NumberColumn(format="%d", min_value=0, step=1),
-                "kategoria_id": None, # Ukryte
-                "id": None # Ukryte
+                "Cena (PLN)": st.column_config.NumberColumn(format="%.2f zł", min_value=0, step=0.01, required=True),
+                "Stan (szt.)": st.column_config.NumberColumn(format="%d", min_value=0, step=1, required=True),
+                "kategoria_id_hidden": None # Ukrywamy kolumnę techniczną
             },
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            num_rows="fixed" # Zapobiega dodawaniu/usuwaniu wierszy w tym widoku
         )
 
-        # Logika zapisu zmian (porównujemy wersję wyświetlaną z oryginałem)
-        if not edited_df.equals(display_df):
-            # Musimy mapować z powrotem na nazwy bazodanowe
-            cols_check = ['Stan (szt.)', 'Cena (PLN)']
-            diff = edited_df[cols_check].ne(display_df[cols_check]).any(axis=1)
+        # --- OBSŁUGA ZMIAN W EDYTORZE ---
+        # Sprawdzamy, czy stan edytora się zmienił w stosunku do oryginału
+        if not edited_df.equals(produkty_df):
+            # Znajdujemy zmienione wiersze
+            # (Porównujemy tylko kolumny, które mogły być edytowane)
+            cols_to_check = ['Stan (szt.)', 'Cena (PLN)']
+            diff = edited_df[cols_to_check].ne(produkty_df[cols_to_check]).any(axis=1)
             changed_rows = edited_df[diff]
             
             if not changed_rows.empty:
-                with st.spinner("Zapisuję..."):
+                with st.spinner("Zapisuję zmiany w bazie danych..."):
+                    success_count = 0
                     for index, row in changed_rows.iterrows():
                         try:
-                            # Pobieramy ID z ukrytej (ale dostępnej w DataFrame) kolumny
-                            prod_id = produkty_df.iloc[index]['id']
                             supabase.table('Produkty').update({
                                 "liczba": int(row['Stan (szt.)']),
                                 "cena": float(row['Cena (PLN)'])
-                            }).eq('id', int(prod_id)).execute()
+                            }).eq('id', int(row['ID'])).execute()
+                            success_count += 1
                         except Exception as e:
-                            st.error(f"Błąd zapisu: {e}")
-                    
-                    st.toast("Zmiany zapisane!", icon="🔥")
-                    import time
-                    time.sleep(0.5)
-                    st.rerun()
+                             st.error(f"Błąd zapisu dla ID {row['ID']}: {e}")
+
+                    if success_count > 0:
+                        st.toast(f"✅ Zapisano zmiany w {success_count} produktach!", icon="💾")
+                        # Małe opóźnienie i rerun, aby tabela się odświeżyła z nowymi danymi
+                        import time
+                        time.sleep(0.5)
+                        st.rerun()
+
 
     st.divider()
 
-    # --- ZARZĄDZANIE ---
-    c_add, c_del = st.columns(2)
-    with c_add:
-        with st.expander("➕ Dodaj Produkt"):
-            if not kategorie_df.empty:
-                opcje_kat = {r['nazwa']: r['id'] for i, r in kategorie_df.iterrows()}
-                with st.form("add_p", clear_on_submit=True):
-                    n = st.text_input("Nazwa")
-                    l = st.number_input("Ilość", 0)
-                    c = st.number_input("Cena", 0.0)
-                    k = st.selectbox("Kategoria", list(opcje_kat.keys()))
-                    if st.form_submit_button("Dodaj", type="primary"):
-                        if n:
-                            supabase.table('Produkty').insert({
-                                "nazwa": n, "liczba": l, "cena": c, "kategoria_id": opcje_kat[k]
-                            }).execute()
-                            st.rerun()
-    with c_del:
-        with st.expander("🗑️ Usuń Produkt"):
-            if not produkty_df.empty:
-                d_list = {f"{r['nazwa']} ({r['id']})": r['id'] for i, r in produkty_df.iterrows()}
-                sel = st.selectbox("Wybierz", list(d_list.keys()))
-                if st.button("Usuń", type="primary"):
-                    supabase.table('Produkty').delete().eq('id', d_list[sel]).execute()
-                    st.rerun()
+    # --- 3. ZARZĄDZANIE (DODAWANIE / USUWANIE) ---
+    col_add, col_del = st.columns(2)
 
-# === ZAKŁADKA 2 ===
+    with col_add:
+        with st.expander("➕ Dodaj Nowy Produkt", expanded=False):
+            if kategorie_df.empty:
+                st.warning("Najpierw dodaj kategorie w drugiej zakładce.")
+            else:
+                opcje_kat = {row['nazwa']: row['id'] for index, row in kategorie_df.iterrows()}
+                with st.form("form_add_prod", clear_on_submit=True):
+                    n_nazwa = st.text_input("Nazwa produktu*")
+                    c1, c2 = st.columns(2)
+                    n_liczba = c1.number_input("Stan początkowy", min_value=0, step=1, value=0)
+                    n_cena = c2.number_input("Cena (PLN)", min_value=0.0, step=0.01, value=0.0)
+                    n_kat_nazwa = st.selectbox("Kategoria*", options=list(opcje_kat.keys()))
+                    
+                    if st.form_submit_button("🚀 Utwórz produkt", type="primary"):
+                        if n_nazwa and n_kat_nazwa:
+                            try:
+                                supabase.table('Produkty').insert({
+                                    "nazwa": n_nazwa, "liczba": n_liczba, 
+                                    "cena": n_cena, "kategoria_id": opcje_kat[n_kat_nazwa]
+                                }).execute()
+                                st.success("Produkt dodany pomyślnie!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Błąd bazy danych: {e}")
+                        else:
+                            st.warning("Uzupełnij wymagane pola (Nazwa i Kategoria).")
+
+    with col_del:
+        with st.expander("🗑️ Usuń Produkt", expanded=False):
+             if produkty_df.empty:
+                st.write("Brak produktów do usunięcia.")
+             else:
+                # Używamy selectboxa z nazwami zamiast wpisywania ID ręcznie - bezpieczniej
+                opcje_usuwania = {f"{row['Nazwa Produktu']} (ID: {row['ID']})": row['ID'] for index, row in produkty_df.iterrows()}
+                selected_to_delete_label = st.selectbox("Wybierz produkt do trwałego usunięcia", options=list(opcje_usuwania.keys()))
+                
+                if st.button("🔥 Potwierdź usunięcie", type="secondary"):
+                    id_to_del = opcje_usuwania[selected_to_delete_label]
+                    try:
+                        supabase.table('Produkty').delete().eq('id', id_to_del).execute()
+                        st.toast(f"Produkt usunięty!", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                         st.error(f"Nie udało się usunąć: {e}")
+
+# ==================================================
+# ZAKŁADKA 2: KATEGORIE
+# ==================================================
 with tab_kat:
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        st.subheader("📚 Kategorie")
+    col_k_list, col_k_actions = st.columns([3, 2])
+    
+    with col_k_list:
+        st.subheader("🗂️ Zdefiniowane Kategorie")
         if not kategorie_df.empty:
-            st.dataframe(kategorie_df[['nazwa', 'opis']], use_container_width=True, hide_index=True)
-    with c2:
-        st.subheader("⚙️ Nowa Kategoria")
-        with st.form("add_k", clear_on_submit=True):
-            kn = st.text_input("Nazwa")
-            ko = st.text_area("Opis")
-            if st.form_submit_button("Utwórz", type="primary"):
-                if kn:
-                    supabase.table('Kategorie').insert({"nazwa": kn, "opis": ko}).execute()
-                    st.rerun()
-        
+             # Używamy data editora również tutaj, ale tylko do podglądu (disabled)
+             # Można włączyć edycję opisów, jeśli chcesz
+             st.data_editor(
+                 kategorie_df[['id', 'nazwa', 'opis']], 
+                 disabled=["id", "nazwa", "opis"], 
+                 hide_index=True, use_container_width=True,
+                 column_config={"id": st.column_config.TextColumn("ID", width="small")}
+             )
+        else:
+            st.info("Brak zdefiniowanych kategorii.")
+
+    with col_k_actions:
+        st.subheader("⚙️ Operacje")
+        with st.expander("✨ Utwórz Kategorię", expanded=True):
+            with st.form("form_new_kat", clear_on_submit=True):
+                k_nazwa = st.text_input("Nazwa kategorii*", placeholder="np. Elektronika")
+                k_opis = st.text_area("Opis (opcjonalnie)", placeholder="Krótki opis...")
+                
+                if st.form_submit_button("Dodaj kategorię", type="primary"):
+                    if k_nazwa:
+                        supabase.table('Kategorie').insert({"nazwa": k_nazwa, "opis": k_opis}).execute()
+                        st.toast("Kategoria dodana!", icon="✨")
+                        st.rerun()
+                    else:
+                        st.warning("Nazwa kategorii jest wymagana.")
+
         if not kategorie_df.empty:
-            st.divider()
-            st.write("Usuwanie kategorii:")
-            k_del_names = [r['nazwa'] for i, r in kategorie_df.iterrows()]
-            k_sel = st.selectbox("Którą usunąć?", k_del_names)
-            if st.button("Usuń kategorię", type="secondary"):
-                try:
-                    kid = next(r['id'] for i, r in kategorie_df.iterrows() if r['nazwa'] == k_sel)
-                    supabase.table('Kategorie').delete().eq('id', kid).execute()
-                    st.rerun()
-                except:
-                    st.error("Nie można usunąć używanej kategorii!")
+             with st.expander("⚠️ Usuń Kategorię"):
+                st.warning("Uwaga: Nie można usunąć kategorii, do której są przypisane produkty.")
+                kat_del_list = {row['nazwa']: row['id'] for index, row in kategorie_df.iterrows()}
+                kat_to_del_name = st.selectbox("Wybierz kategorię", options=list(kat_del_list.keys()))
+                
+                if st.button("Potwierdź usunięcie kategorii"):
+                    try:
+                        supabase.table('Kategorie').delete().eq('id', kat_del_list[kat_to_del_name]).execute()
+                        st.success("Kategoria usunięta.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error("⛔ Nie można usunąć tej kategorii. Prawdopodobnie są do niej przypisane produkty.")
